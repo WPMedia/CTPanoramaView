@@ -93,6 +93,9 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     private var prevLocation = CGPoint.zero
     private var prevBounds = CGRect.zero
 
+    var currentlyPanning = false
+    var panningVelocity = CGPoint(x: 0,y: 0)
+    var panningEndTime: TimeInterval = 0.0
     var panningVector = SCNVector3Make(0,100,0)
     var headingVector = SCNVector3Make(0,Float(-1.0 * .pi / 2.0),0)
 
@@ -233,6 +236,8 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
                     Float(-userHeading) ,
                     0)
 
+                self?.decelerateIfNecessary()
+
                 if panoramaView.panoramaType == .cylindrical {
                     panoramaView.cameraNode.eulerAngles = panoramaView.headingVector
                         + panoramaView.panningVector
@@ -262,7 +267,51 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     }
     
     // MARK: Gesture handling
-    
+
+    private func decelerateIfNecessary() {
+        if !currentlyPanning && (panningVelocity.x > 0.5 || panningVelocity.x < -0.5) {
+            // let orientation = cameraNode.eulerAngles
+            let currentTime = Date().timeIntervalSinceReferenceDate
+            let dt:Float = Float(panningEndTime - currentTime)
+            let ay:Float = panningVelocity.y < 0 ? fmaxf(1000, Float(panningVelocity.y) * -1) : fminf(-1000, Float(panningVelocity.y) * -1)
+            let ax:Float = panningVelocity.x < 0 ? fmaxf(1000, Float(panningVelocity.x) * -1) : fminf(-1000, Float(panningVelocity.x) * -1)
+
+            var modifiedPanSpeed = panSpeed
+
+            if panoramaType == .cylindrical {
+                modifiedPanSpeed.y = 0 // Prevent vertical movement in a cylindrical panorama
+            }
+
+            var x = (Float(panningVelocity.y) - (0.5 * ay * dt)) * dt
+            x = x * Float(modifiedPanSpeed.y) * -1
+            var y = (Float(panningVelocity.x) - (0.5 * ax * dt)) * dt
+            y = y * Float(modifiedPanSpeed.x) * -1
+            panningVector = panningVector + SCNVector3Make(
+                0,
+                y,
+                0)
+
+            var newOrientation = panningVector + headingVector
+            if controlMethod == .touch {
+                newOrientation.x = max(min(newOrientation.x, 1.1),-1.1)
+            }
+
+            cameraNode.eulerAngles = newOrientation
+
+            NSLog("decelerating from \(panningVelocity.y) over \(dt) \(panningVelocity.x - CGFloat(ax * dt))")
+            panningVelocity = CGPoint(
+                x: panningVelocity.x - CGFloat(ax * dt),
+                y: panningVelocity.y - CGFloat(ay * dt)
+            )
+
+            panningEndTime = currentTime
+        }
+    }
+
+    override public func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        currentlyPanning = true
+    }
+
     @objc private func handlePan(panRec: UIPanGestureRecognizer) {
         if controlMethod == .combo && panoramaType == .spherical {
             // FIXME combo control method not supported in spherical panoramas at this time
@@ -271,6 +320,7 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
 
         if panRec.state == .began {
             prevLocation = CGPoint.zero
+            currentlyPanning = true
         }
         else if panRec.state == .changed {
             var modifiedPanSpeed = panSpeed
@@ -296,6 +346,11 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
             prevLocation = location
             
             reportMovement(CGFloat(-cameraNode.eulerAngles.y), xFov.toRadians())
+        } else if panRec.state == .ended {
+            // Record current velocity for future use
+            panningVelocity = panRec.velocity(in: self)
+            panningEndTime = Date().timeIntervalSinceReferenceDate
+            currentlyPanning = false
         }
     }
     
