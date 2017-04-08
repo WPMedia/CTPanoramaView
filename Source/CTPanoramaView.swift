@@ -76,7 +76,6 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     public var controlMethod: CTPanoramaControlMethod! {
         didSet {
             switchControlMethod(to: controlMethod!)
-            resetCameraAngles()
         }
     }
     
@@ -298,7 +297,7 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
 
             cameraNode.eulerAngles = newOrientation
 
-            NSLog("decelerating from \(panningVelocity.y) over \(dt) \(panningVelocity.x - CGFloat(ax * dt))")
+            // NSLog("decelerating from \(panningVelocity.y) over \(dt) \(panningVelocity.x - CGFloat(ax * dt))")
             panningVelocity = CGPoint(
                 x: panningVelocity.x - CGFloat(ax * dt),
                 y: panningVelocity.y - CGFloat(ay * dt)
