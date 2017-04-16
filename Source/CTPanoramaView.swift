@@ -262,6 +262,7 @@ fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
                 var userHeading = .pi - atan2(rm.m32, rm.m31)
                 userHeading += .pi/2
 
+                var lastHeadingVector = panoramaView.headingVector
                 panoramaView.headingVector = SCNVector3Make(
                     0 ,
                     Float(-userHeading) ,
@@ -273,6 +274,11 @@ fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
                 if !panoramaView.gyroHasStarted {
                     panoramaView.offsetVector = panoramaView.offsetVector - panoramaView.headingVector
                     panoramaView.gyroHasStarted = true
+                }
+
+                let dy = fmod(lastHeadingVector.y - panoramaView.headingVector.y, 2 * .pi)
+                if abs(dy) < 0.003 {
+                    panoramaView.offsetVector = panoramaView.offsetVector + SCNVector3Make(0,dy,0)
                 }
 
                 if panoramaView.panoramaType == .cylindrical {
