@@ -112,7 +112,7 @@ fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     var headingVector = SCNVector3Make(0,0,0)
 
     // The initialOffsetVector can be used to set what part of a panorama we want the user looking at on start.
-    var initialOffsetVector = SCNVector3Make(0,.pi / 2.0,0)
+    public var initialOffsetVector = SCNVector3Make(0,.pi / 2.0,0)
 
     // The offsetVector is modified by -headingVector upon first reading from the gyro in order
     // to prevent awild swing on startup
