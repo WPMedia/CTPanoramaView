@@ -276,6 +276,7 @@ fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
                     panoramaView.gyroHasStarted = true
                 }
 
+                // Gyro updates below a threshold we consider gyroscopic drift and ignore
                 let dy = fmod(lastHeadingVector.y - panoramaView.headingVector.y, 2 * .pi)
                 if abs(dy) < 0.003 {
                     panoramaView.offsetVector = panoramaView.offsetVector + SCNVector3Make(0,dy,0)
