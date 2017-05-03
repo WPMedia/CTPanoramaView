@@ -48,7 +48,7 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     }
 }
 
-@objc public class CTPanoramaView: UIView {
+@objc public class CTPanoramaView: UIView, SCNSceneRendererDelegate {
     
     // MARK: Public properties
     
@@ -76,7 +76,6 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     public var controlMethod: CTPanoramaControlMethod! {
         didSet {
             switchControlMethod(to: controlMethod!)
-            resetCameraAngles()
         }
     }
     
@@ -93,6 +92,10 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     private var prevLocation = CGPoint.zero
     private var prevBounds = CGRect.zero
 
+    var currentlyPanning = false
+    var panningVelocity = CGPoint(x: 0,y: 0)
+    var panningEndTime: TimeInterval = 0.0
+    var lastUpdateTime: TimeInterval = 0.0 // Set every frame by the render delegate
     var panningVector = SCNVector3Make(0,100,0)
     var headingVector = SCNVector3Make(0,Float(-1.0 * .pi / 2.0),0)
 
@@ -151,7 +154,9 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
         
         sceneView.scene = scene
         sceneView.backgroundColor = UIColor.black
-        
+        sceneView.delegate = self
+        sceneView.isPlaying = true
+
         if controlMethod == nil {
             controlMethod = .touch
         }
@@ -262,7 +267,49 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     }
     
     // MARK: Gesture handling
-    
+
+    private func decelerateIfNecessary(updateAtTime currentTime: TimeInterval) {
+        if panoramaType == .cylindrical && !currentlyPanning && abs(panningVelocity.x) > 0.05 {
+
+            let dt = panningEndTime - currentTime
+            let vx = Double(panningVelocity.x)
+            let vy = Double(panningVelocity.y)
+            let ax = vx < 0 ? max(1000, vx * -1) : min(-1000, vx * -1)
+            let ay = vy < 0 ? max(1000, vy * -1) : min(-1000, vy * -1)
+
+            var modifiedPanSpeed = panSpeed
+
+            if panoramaType == .cylindrical {
+                modifiedPanSpeed.y = 0 // Prevent vertical movement in a cylindrical panorama
+            }
+
+            var x = (vy - (0.5 * ay * dt)) * dt
+            x = x * Double(modifiedPanSpeed.y) * -1
+            var y = (vx - (0.5 * ax * dt)) * dt
+            y = y * Double(modifiedPanSpeed.x) * -1
+            panningVector = panningVector + SCNVector3Make(0,Float(y),0)
+
+            var newOrientation = panningVector + headingVector
+            if controlMethod == .touch {
+                newOrientation.x = max(min(newOrientation.x, 1.1),-1.1)
+            }
+
+            cameraNode.eulerAngles = newOrientation
+
+            // NSLog("decelerating from \(panningVelocity.y) over \(dt) \(panningVelocity.x - CGFloat(ax * dt))")
+            panningVelocity = CGPoint(
+                x: panningVelocity.x > 0 ? max(panningVelocity.x - CGFloat(ax * dt),0) : min(panningVelocity.x - CGFloat(ax * dt),0),
+                y: panningVelocity.y > 0 ? max(panningVelocity.y - CGFloat(ay * dt),0) : min(panningVelocity.y - CGFloat(ay * dt),0)
+            )
+
+            panningEndTime = currentTime
+        }
+    }
+
+    override public func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        currentlyPanning = true
+    }
+
     @objc private func handlePan(panRec: UIPanGestureRecognizer) {
         if controlMethod == .combo && panoramaType == .spherical {
             // FIXME combo control method not supported in spherical panoramas at this time
@@ -271,6 +318,7 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
 
         if panRec.state == .began {
             prevLocation = CGPoint.zero
+            currentlyPanning = true
         }
         else if panRec.state == .changed {
             var modifiedPanSpeed = panSpeed
@@ -296,6 +344,11 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
             prevLocation = location
             
             reportMovement(CGFloat(-cameraNode.eulerAngles.y), xFov.toRadians())
+        } else if panRec.state == .ended {
+            // Record current velocity for future use
+            panningVelocity = panRec.velocity(in: self)
+            panningEndTime = self.lastUpdateTime
+            currentlyPanning = false
         }
     }
     
@@ -305,6 +358,13 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
             sceneView.setNeedsDisplay()
             reportMovement(CGFloat(-cameraNode.eulerAngles.y), xFov.toRadians(), callHandler: false)
         }
+    }
+
+    // MARK: SCNSceneRendererDelegate
+
+    public func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+        decelerateIfNecessary(updateAtTime: time)
+        lastUpdateTime = time
     }
 }
 
