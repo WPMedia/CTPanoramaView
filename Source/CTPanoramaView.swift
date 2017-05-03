@@ -85,8 +85,8 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     
     // MARK: Private properties
     
-    private let radius: CGFloat = 10
-    private let sceneView = SCNView()
+    public let radius: CGFloat = 10
+    public let sceneView = SCNView()
     private let scene = SCNScene()
     private let motionManager = CMMotionManager()
     private var geometryNode: SCNNode?
