@@ -18,6 +18,10 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     return SCNVector3Make(left.x + right.x, left.y + right.y, left.z + right.z)
 }
 
+fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
+    return SCNVector3Make(left.x - right.x, left.y - right.y, left.z - right.z)
+}
+
 @objc public protocol CTPanoramaCompass {
     func updateUI(rotationAngle: CGFloat, fieldOfViewAngle: CGFloat)
 }
@@ -92,12 +96,29 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     private var prevLocation = CGPoint.zero
     private var prevBounds = CGRect.zero
 
-    var currentlyPanning = false
-    var panningVelocity = CGPoint(x: 0,y: 0)
-    var panningEndTime: TimeInterval = 0.0
-    var lastUpdateTime: TimeInterval = 0.0 // Set every frame by the render delegate
-    var panningVector = SCNVector3Make(0,100,0)
-    var headingVector = SCNVector3Make(0,Float(-1.0 * .pi / 2.0),0)
+    // Variables used to implement deceleration on touch up from panning
+    private var currentlyPanning = false
+    private var panningVelocity = CGPoint(x: 0,y: 0)
+    private var panningEndTime: TimeInterval = 0.0
+    private var lastUpdateTime: TimeInterval = 0.0 // Set every frame by the render delegate
+
+    // Camera angle variables. In general the camera angle for cylindrical panoramas is
+    // panningVector + headingVector + offsetVector
+
+    // The angle the touch controls have rotated the camera to
+    var panningVector = SCNVector3Make(0,0,0)
+
+    // The angle the gyro has rotated the camera to
+    var headingVector = SCNVector3Make(0,0,0)
+
+    // The initialOffsetVector can be used to set what part of a panorama we want the user looking at on start.
+    var initialOffsetVector = SCNVector3Make(0,.pi / 2.0,0)
+
+    // The offsetVector is modified by -headingVector upon first reading from the gyro in order
+    // to prevent awild swing on startup
+    var offsetVector = SCNVector3Make(0,0,0)
+
+    private var gyroHasStarted = false
 
     private lazy var cameraNode: SCNNode = {
         let node = SCNNode()
@@ -204,7 +225,15 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
         guard let newOverlayView = newOverlayView else {return}
         add(view: newOverlayView)
     }
-    
+
+    private func updateEulerAngles() {
+        var newOrientation = panningVector + headingVector + offsetVector
+        if controlMethod == .touch {
+            newOrientation.x = max(min(newOrientation.x, 1.1),-1.1)
+        }
+        cameraNode.eulerAngles = newOrientation
+    }
+
     private func switchControlMethod(to method: CTPanoramaControlMethod) {
         sceneView.gestureRecognizers?.removeAll()
 
@@ -238,9 +267,16 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
                     Float(-userHeading) ,
                     0)
 
+                // Offset the initial reading from the gyro so we don't encounter a sudden jump 
+                // on gyro startup
+
+                if !panoramaView.gyroHasStarted {
+                    panoramaView.offsetVector = panoramaView.offsetVector - panoramaView.headingVector
+                    panoramaView.gyroHasStarted = true
+                }
+
                 if panoramaView.panoramaType == .cylindrical {
-                    panoramaView.cameraNode.eulerAngles = panoramaView.headingVector
-                        + panoramaView.panningVector
+                    panoramaView.updateEulerAngles()
                 }
                 else {
                     // Use quaternions when in spherical mode to prevent gimbal lock
@@ -252,11 +288,12 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     }
     
     private func resetCameraAngles() {
-        cameraNode.eulerAngles = SCNVector3Make(0, 0, 0)
-        panningVector = SCNVector3Make(0,100,0)
-        headingVector = SCNVector3Make(0,Float(-1.0 * .pi / 2.0),0)
+        panningVector = SCNVector3Make(0,0,0)
+        headingVector = SCNVector3Make(0,0,0)
+        offsetVector = initialOffsetVector
 
-        self.reportMovement(0, xFov.toRadians(), callHandler: false)
+        updateEulerAngles()
+        reportMovement(CGFloat(-cameraNode.eulerAngles.y), xFov.toRadians())
     }
     
     private func reportMovement(_ rotationAngle: CGFloat, _ fieldOfViewAngle: CGFloat, callHandler: Bool = true) {
@@ -289,12 +326,7 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
             y = y * Double(modifiedPanSpeed.x) * -1
             panningVector = panningVector + SCNVector3Make(0,Float(y),0)
 
-            var newOrientation = panningVector + headingVector
-            if controlMethod == .touch {
-                newOrientation.x = max(min(newOrientation.x, 1.1),-1.1)
-            }
-
-            cameraNode.eulerAngles = newOrientation
+            updateEulerAngles()
 
             // NSLog("decelerating from \(panningVelocity.y) over \(dt) \(panningVelocity.x - CGFloat(ax * dt))")
             panningVelocity = CGPoint(
@@ -335,12 +367,7 @@ fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
                 Float(location.x - prevLocation.x) * Float(modifiedPanSpeed.x),
                 0)
 
-            var newOrientation = panningVector + headingVector
-            if controlMethod == .touch {
-                newOrientation.x = max(min(newOrientation.x, 1.1),-1.1)
-            }
-
-            cameraNode.eulerAngles = newOrientation
+            updateEulerAngles()
             prevLocation = location
             
             reportMovement(CGFloat(-cameraNode.eulerAngles.y), xFov.toRadians())
