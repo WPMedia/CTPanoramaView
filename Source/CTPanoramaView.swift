@@ -22,6 +22,32 @@ fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     return SCNVector3Make(left.x - right.x, left.y - right.y, left.z - right.z)
 }
 
+fileprivate func * (left: CMQuaternion, right: CMQuaternion) -> CMQuaternion {
+    let newW = left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z;
+    let newX = left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y;
+    let newY = left.w * right.y + left.y * right.w + left.z * right.x - left.x * right.z;
+    let newZ = left.w * right.z + left.z * right.w + left.x * right.y - left.y * right.x;
+    return CMQuaternion(x: newX, y: newY, z: newZ, w: newW)
+}
+
+fileprivate extension CMDeviceMotion {
+
+    // Computes the angle between the vector normal to the phone screen and the ground plane (e.g. ceiling)
+    // see http://stackoverflow.com/a/10836923
+
+    fileprivate var angleFromGroundPlane: Double {
+
+        let e = CMQuaternion(x: 0,y: 0,z: 1,w: 0)
+        let cm = self.attitude.quaternion
+        let cmConjugate = CMQuaternion(x: -cm.x, y: -cm.y, z: -cm.z, w: cm.w)
+
+        let quat = (cm * e) * cmConjugate
+
+        let h = sqrt(quat.x * quat.x + quat.y * quat.y)
+        return atan(quat.z / h)
+    }
+}
+
 @objc public protocol CTPanoramaCompass {
     func updateUI(rotationAngle: CGFloat, fieldOfViewAngle: CGFloat)
 }
@@ -112,7 +138,7 @@ fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
     var headingVector = SCNVector3Make(0,0,0)
 
     // The initialOffsetVector can be used to set what part of a panorama we want the user looking at on start.
-    var initialOffsetVector = SCNVector3Make(0,.pi / 2.0,0)
+    public var initialOffsetVector = SCNVector3Make(0,.pi / 2.0,0)
 
     // The offsetVector is modified by -headingVector upon first reading from the gyro in order
     // to prevent awild swing on startup
@@ -262,6 +288,7 @@ fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
                 var userHeading = .pi - atan2(rm.m32, rm.m31)
                 userHeading += .pi/2
 
+                var lastHeadingVector = panoramaView.headingVector
                 panoramaView.headingVector = SCNVector3Make(
                     0 ,
                     Float(-userHeading) ,
@@ -274,6 +301,20 @@ fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
                     panoramaView.offsetVector = panoramaView.offsetVector - panoramaView.headingVector
                     panoramaView.gyroHasStarted = true
                 }
+
+                // As abs(angleFromGroundPlane) approaches pi/2 we want to offset more and more of the orientation change
+
+                let percentFaceUpOrDown = Float(abs(motionData.angleFromGroundPlane) / (.pi / 2))
+                let percentOfMovementToOffset = percentFaceUpOrDown // percentFaceUpOrDown^X is also fine, whatever feels right
+                var dy = fmod(lastHeadingVector.y, 2 * .pi) - fmod(panoramaView.headingVector.y, 2 * .pi)
+                if dy > .pi {
+                    dy = dy - 2 * .pi
+                } else if dy < -.pi {
+                    dy = dy + 2 * .pi
+                }
+                // NSLog("Angle \(motionData.angleFromGroundPlane) % to offset = \(percentOfMovementToOffset) hv: \(lastHeadingVector.y) phv: \(panoramaView.headingVector.y) dy = \(dy)")
+
+                panoramaView.offsetVector = panoramaView.offsetVector + SCNVector3Make(0,dy * percentOfMovementToOffset,0)
 
                 if panoramaView.panoramaType == .cylindrical {
                     panoramaView.updateEulerAngles()
