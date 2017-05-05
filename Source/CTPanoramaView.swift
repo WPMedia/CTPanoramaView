@@ -11,6 +11,43 @@ import SceneKit
 import CoreMotion
 import ImageIO
 
+/**
+ * Adds two SCNVector3 vectors and returns the result as a new SCNVector3.
+ */
+fileprivate func + (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
+    return SCNVector3Make(left.x + right.x, left.y + right.y, left.z + right.z)
+}
+
+fileprivate func - (left: SCNVector3, right: SCNVector3) -> SCNVector3 {
+    return SCNVector3Make(left.x - right.x, left.y - right.y, left.z - right.z)
+}
+
+fileprivate func * (left: CMQuaternion, right: CMQuaternion) -> CMQuaternion {
+    let newW = left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z;
+    let newX = left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y;
+    let newY = left.w * right.y + left.y * right.w + left.z * right.x - left.x * right.z;
+    let newZ = left.w * right.z + left.z * right.w + left.x * right.y - left.y * right.x;
+    return CMQuaternion(x: newX, y: newY, z: newZ, w: newW)
+}
+
+fileprivate extension CMDeviceMotion {
+
+    // Computes the angle between the vector normal to the phone screen and the ground plane (e.g. ceiling)
+    // see http://stackoverflow.com/a/10836923
+
+    fileprivate var angleFromGroundPlane: Double {
+
+        let e = CMQuaternion(x: 0,y: 0,z: 1,w: 0)
+        let cm = self.attitude.quaternion
+        let cmConjugate = CMQuaternion(x: -cm.x, y: -cm.y, z: -cm.z, w: cm.w)
+
+        let quat = (cm * e) * cmConjugate
+
+        let h = sqrt(quat.x * quat.x + quat.y * quat.y)
+        return atan(quat.z / h)
+    }
+}
+
 @objc public protocol CTPanoramaCompass {
     func updateUI(rotationAngle: CGFloat, fieldOfViewAngle: CGFloat)
 }
@@ -18,14 +55,30 @@ import ImageIO
 @objc public enum CTPanoramaControlMethod: Int {
     case motion
     case touch
+    case combo // FIXME: Currently combo type is only supported for Cylindrical Panoramas
+
+    public var description : String {
+        switch self {
+        case .motion: return "motion"
+        case .touch: return "touch"
+        case .combo: return "combo"
+        }
+    }
 }
 
 @objc public enum CTPanoramaType: Int {
     case cylindrical
     case spherical
+
+    public var description : String {
+        switch self {
+        case .cylindrical: return "cylindrical"
+        case .spherical: return "spherical"
+        }
+    }
 }
 
-@objc public class CTPanoramaView: UIView {
+@objc public class CTPanoramaView: UIView, SCNSceneRendererDelegate {
     
     // MARK: Public properties
     
@@ -53,7 +106,6 @@ import ImageIO
     public var controlMethod: CTPanoramaControlMethod! {
         didSet {
             switchControlMethod(to: controlMethod!)
-            resetCameraAngles()
         }
     }
     
@@ -62,14 +114,38 @@ import ImageIO
     
     // MARK: Private properties
     
-    private let radius: CGFloat = 10
-    private let sceneView = SCNView()
+    public let radius: CGFloat = 10
+    public let sceneView = SCNView()
     private let scene = SCNScene()
     private let motionManager = CMMotionManager()
     private var geometryNode: SCNNode?
     private var prevLocation = CGPoint.zero
     private var prevBounds = CGRect.zero
-    
+
+    // Variables used to implement deceleration on touch up from panning
+    private var currentlyPanning = false
+    private var panningVelocity = CGPoint(x: 0,y: 0)
+    private var panningEndTime: TimeInterval = 0.0
+    private var lastUpdateTime: TimeInterval = 0.0 // Set every frame by the render delegate
+
+    // Camera angle variables. In general the camera angle for cylindrical panoramas is
+    // panningVector + headingVector + offsetVector
+
+    // The angle the touch controls have rotated the camera to
+    var panningVector = SCNVector3Make(0,0,0)
+
+    // The angle the gyro has rotated the camera to
+    var headingVector = SCNVector3Make(0,0,0)
+
+    // The initialOffsetVector can be used to set what part of a panorama we want the user looking at on start.
+    public var initialOffsetVector = SCNVector3Make(0,.pi / 2.0,0)
+
+    // The offsetVector is modified by -headingVector upon first reading from the gyro in order
+    // to prevent awild swing on startup
+    var offsetVector = SCNVector3Make(0,0,0)
+
+    private var gyroHasStarted = false
+
     private lazy var cameraNode: SCNNode = {
         let node = SCNNode()
         let camera = SCNCamera()
@@ -125,7 +201,9 @@ import ImageIO
         
         sceneView.scene = scene
         sceneView.backgroundColor = UIColor.black
-        
+        sceneView.delegate = self
+        sceneView.isPlaying = true
+
         if controlMethod == nil {
             controlMethod = .touch
         }
@@ -173,24 +251,32 @@ import ImageIO
         guard let newOverlayView = newOverlayView else {return}
         add(view: newOverlayView)
     }
-    
+
+    private func updateEulerAngles() {
+        var newOrientation = panningVector + headingVector + offsetVector
+        if controlMethod == .touch {
+            newOrientation.x = max(min(newOrientation.x, 1.1),-1.1)
+        }
+        cameraNode.eulerAngles = newOrientation
+    }
+
     private func switchControlMethod(to method: CTPanoramaControlMethod) {
         sceneView.gestureRecognizers?.removeAll()
 
-        if method == .touch {
+        if method == .touch || method == .combo {
                 let panGestureRec = UIPanGestureRecognizer(target: self, action: #selector(handlePan(panRec:)))
                 sceneView.addGestureRecognizer(panGestureRec)
  
-            if motionManager.isDeviceMotionActive {
+            if motionManager.isDeviceMotionActive && method != .combo {
                 motionManager.stopDeviceMotionUpdates()
             }
         }
-        else {
+        if method == .motion || method == .combo {
             guard motionManager.isDeviceMotionAvailable else {return}
             motionManager.deviceMotionUpdateInterval = 0.015
             motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: OperationQueue.main, withHandler: {[weak self] (motionData, error) in
                 guard let panoramaView = self else {return}
-                guard panoramaView.controlMethod == .motion else {return}
+                guard panoramaView.controlMethod == .motion || panoramaView.controlMethod == .combo else {return}
                 
                 guard let motionData = motionData else {
                     print("\(error?.localizedDescription)")
@@ -201,22 +287,54 @@ import ImageIO
                 let rm = motionData.attitude.rotationMatrix
                 var userHeading = .pi - atan2(rm.m32, rm.m31)
                 userHeading += .pi/2
-                
+
+                var lastHeadingVector = panoramaView.headingVector
+                panoramaView.headingVector = SCNVector3Make(
+                    0 ,
+                    Float(-userHeading) ,
+                    0)
+
+                // Offset the initial reading from the gyro so we don't encounter a sudden jump 
+                // on gyro startup
+
+                if !panoramaView.gyroHasStarted {
+                    panoramaView.offsetVector = panoramaView.offsetVector - panoramaView.headingVector
+                    panoramaView.gyroHasStarted = true
+                }
+
+                // As abs(angleFromGroundPlane) approaches pi/2 we want to offset more and more of the orientation change
+
+                let percentFaceUpOrDown = Float(abs(motionData.angleFromGroundPlane) / (.pi / 2))
+                let percentOfMovementToOffset = percentFaceUpOrDown // percentFaceUpOrDown^X is also fine, whatever feels right
+                var dy = fmod(lastHeadingVector.y, 2 * .pi) - fmod(panoramaView.headingVector.y, 2 * .pi)
+                if dy > .pi {
+                    dy = dy - 2 * .pi
+                } else if dy < -.pi {
+                    dy = dy + 2 * .pi
+                }
+                // NSLog("Angle \(motionData.angleFromGroundPlane) % to offset = \(percentOfMovementToOffset) hv: \(lastHeadingVector.y) phv: \(panoramaView.headingVector.y) dy = \(dy)")
+
+                panoramaView.offsetVector = panoramaView.offsetVector + SCNVector3Make(0,dy * percentOfMovementToOffset,0)
+
                 if panoramaView.panoramaType == .cylindrical {
-                    panoramaView.cameraNode.eulerAngles = SCNVector3Make(0, Float(-userHeading), 0) // Prevent vertical movement in a cylindrical panorama
+                    panoramaView.updateEulerAngles()
                 }
                 else {
                     // Use quaternions when in spherical mode to prevent gimbal lock
                     panoramaView.cameraNode.orientation = motionData.orientation()
                 }
-                panoramaView.reportMovement(CGFloat(userHeading), panoramaView.xFov.toRadians())
+                panoramaView.reportMovement(CGFloat(-panoramaView.cameraNode.eulerAngles.y), panoramaView.xFov.toRadians())
             })
         }
     }
     
     private func resetCameraAngles() {
-        cameraNode.eulerAngles = SCNVector3Make(0, 0, 0)
-        self.reportMovement(0, xFov.toRadians(), callHandler: false)
+        panningVector = SCNVector3Make(0,0,0)
+        headingVector = SCNVector3Make(0,0,0)
+        offsetVector = initialOffsetVector
+
+        updateEulerAngles()
+        reportMovement(CGFloat(-cameraNode.eulerAngles.y), xFov.toRadians())
     }
     
     private func reportMovement(_ rotationAngle: CGFloat, _ fieldOfViewAngle: CGFloat, callHandler: Bool = true) {
@@ -227,10 +345,53 @@ import ImageIO
     }
     
     // MARK: Gesture handling
-    
+
+    private func decelerateIfNecessary(updateAtTime currentTime: TimeInterval) {
+        if panoramaType == .cylindrical && !currentlyPanning && abs(panningVelocity.x) > 0.05 {
+
+            let dt = panningEndTime - currentTime
+            let vx = Double(panningVelocity.x)
+            let vy = Double(panningVelocity.y)
+            let ax = vx < 0 ? max(1000, vx * -1) : min(-1000, vx * -1)
+            let ay = vy < 0 ? max(1000, vy * -1) : min(-1000, vy * -1)
+
+            var modifiedPanSpeed = panSpeed
+
+            if panoramaType == .cylindrical {
+                modifiedPanSpeed.y = 0 // Prevent vertical movement in a cylindrical panorama
+            }
+
+            var x = (vy - (0.5 * ay * dt)) * dt
+            x = x * Double(modifiedPanSpeed.y) * -1
+            var y = (vx - (0.5 * ax * dt)) * dt
+            y = y * Double(modifiedPanSpeed.x) * -1
+            panningVector = panningVector + SCNVector3Make(0,Float(y),0)
+
+            updateEulerAngles()
+
+            // NSLog("decelerating from \(panningVelocity.y) over \(dt) \(panningVelocity.x - CGFloat(ax * dt))")
+            panningVelocity = CGPoint(
+                x: panningVelocity.x > 0 ? max(panningVelocity.x - CGFloat(ax * dt),0) : min(panningVelocity.x - CGFloat(ax * dt),0),
+                y: panningVelocity.y > 0 ? max(panningVelocity.y - CGFloat(ay * dt),0) : min(panningVelocity.y - CGFloat(ay * dt),0)
+            )
+
+            panningEndTime = currentTime
+        }
+    }
+
+    override public func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        currentlyPanning = true
+    }
+
     @objc private func handlePan(panRec: UIPanGestureRecognizer) {
+        if controlMethod == .combo && panoramaType == .spherical {
+            // FIXME combo control method not supported in spherical panoramas at this time
+            return
+        }
+
         if panRec.state == .began {
             prevLocation = CGPoint.zero
+            currentlyPanning = true
         }
         else if panRec.state == .changed {
             var modifiedPanSpeed = panSpeed
@@ -240,19 +401,22 @@ import ImageIO
             }
             
             let location = panRec.translation(in: sceneView)
-            let orientation = cameraNode.eulerAngles
-            var newOrientation = SCNVector3Make(orientation.x + Float(location.y - prevLocation.y) * Float(modifiedPanSpeed.y),
-                                                orientation.y + Float(location.x - prevLocation.x) * Float(modifiedPanSpeed.x),
-                                                orientation.z)
-            
-            if controlMethod == .touch {
-                newOrientation.x = max(min(newOrientation.x, 1.1),-1.1)
-            }
+            // let orientation = cameraNode.eulerAngles
 
-            cameraNode.eulerAngles = newOrientation
+            panningVector = panningVector + SCNVector3Make(
+                Float(location.y - prevLocation.y) * Float(modifiedPanSpeed.y),
+                Float(location.x - prevLocation.x) * Float(modifiedPanSpeed.x),
+                0)
+
+            updateEulerAngles()
             prevLocation = location
             
             reportMovement(CGFloat(-cameraNode.eulerAngles.y), xFov.toRadians())
+        } else if panRec.state == .ended {
+            // Record current velocity for future use
+            panningVelocity = panRec.velocity(in: self)
+            panningEndTime = self.lastUpdateTime
+            currentlyPanning = false
         }
     }
     
@@ -262,6 +426,13 @@ import ImageIO
             sceneView.setNeedsDisplay()
             reportMovement(CGFloat(-cameraNode.eulerAngles.y), xFov.toRadians(), callHandler: false)
         }
+    }
+
+    // MARK: SCNSceneRendererDelegate
+
+    public func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+        decelerateIfNecessary(updateAtTime: time)
+        lastUpdateTime = time
     }
 }
 
