@@ -158,7 +158,7 @@
 				TargetAttributes = {
 					CF415ADD1E55E314002A98ED = {
 						CreatedOnToolsVersion = 8.2.1;
-						DevelopmentTeam = 38P3Q4228V;
+						DevelopmentTeam = 2829339WJT;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -358,7 +358,7 @@
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				DEVELOPMENT_TEAM = 38P3Q4228V;
+				DEVELOPMENT_TEAM = 2829339WJT;
 				INFOPLIST_FILE = Example/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.scihant.Example;
@@ -372,7 +372,7 @@
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				DEVELOPMENT_TEAM = 38P3Q4228V;
+				DEVELOPMENT_TEAM = 2829339WJT;
 				INFOPLIST_FILE = Example/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.scihant.Example;

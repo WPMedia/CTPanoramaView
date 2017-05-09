@@ -10,6 +10,7 @@ import UIKit
 import SceneKit
 import CoreMotion
 import ImageIO
+import AVFoundation
 
 /**
  * Adds two SCNVector3 vectors and returns the result as a new SCNVector3.
@@ -203,6 +204,9 @@ fileprivate extension CMDeviceMotion {
         sceneView.backgroundColor = UIColor.black
         sceneView.delegate = self
         sceneView.isPlaying = true
+        if #available(iOS 9.0, *) {
+            _ = sceneView.audioEngine
+        }
 
         if controlMethod == nil {
             controlMethod = .touch
