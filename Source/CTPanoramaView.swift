@@ -283,7 +283,7 @@ fileprivate extension CMDeviceMotion {
                 guard panoramaView.controlMethod == .motion || panoramaView.controlMethod == .combo else {return}
                 
                 guard let motionData = motionData else {
-                    print("\(error?.localizedDescription)")
+                    print("\(String(describing: error?.localizedDescription))")
                     panoramaView.motionManager.stopDeviceMotionUpdates()
                     return
                 }
@@ -292,7 +292,7 @@ fileprivate extension CMDeviceMotion {
                 var userHeading = .pi - atan2(rm.m32, rm.m31)
                 userHeading += .pi/2
 
-                var lastHeadingVector = panoramaView.headingVector
+                let lastHeadingVector = panoramaView.headingVector
                 panoramaView.headingVector = SCNVector3Make(
                     0 ,
                     Float(-userHeading) ,
